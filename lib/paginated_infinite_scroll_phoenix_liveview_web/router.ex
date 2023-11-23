@@ -17,7 +17,8 @@ defmodule PaginatedInfiniteScrollPhoenixLiveviewWeb.Router do
   scope "/", PaginatedInfiniteScrollPhoenixLiveviewWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", ListLive.Index, :index
+    live "/:id", ListLive.Show, :show
   end
 
   # Other scopes may use custom stacks.
