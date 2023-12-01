@@ -3,3 +3,13 @@
 @import "tailwindcss/utilities";
 
 /* This file is for your main application CSS */
+
+#virtual-list {
+  position: relative;
+}
+.virtual-bottom-observer {
+  background-color: rgba(0, 0, 255, 0.25);
+}
+.virtual-top-observer {
+  background-color: rgba(255, 7, 63, 0.25);
+}

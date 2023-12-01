@@ -22,9 +22,11 @@ import { Socket } from "phoenix"
 import { LiveSocket } from "phoenix_live_view"
 import topbar from "../vendor/topbar"
 import InfiniteScrollTrack from "./hooks/infinite_scroll_track";
+import InfiniteScroll from "./hooks/infinite_scroll";
 
 const hooks = {
   InfiniteScrollTrack,
+  InfiniteScroll,
 };
 
 let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")

@@ -8,6 +8,7 @@ const path = require("path")
 module.exports = {
   content: [
     "./js/**/*.js",
+    "./js/**/*.ts",
     "../lib/paginated_infinite_scroll_phoenix_liveview_web.ex",
     "../lib/paginated_infinite_scroll_phoenix_liveview_web/**/*.*ex"
   ],
