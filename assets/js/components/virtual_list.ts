@@ -5,14 +5,19 @@ import type { Response } from "../types";
 type Props<T> = {
   itemMargin: number;
   pageSize: number;
+  startPage?: number;
   load: (start: number, limit: number) => Promise<Response<T>>;
-  templateFn: (item: T) => string;
-  updateFn: (element: HTMLElement, datum: T) => HTMLElement;
+  initLoad: (start: number, limit: number) => Promise<Response<T>>;
+  renderItem: (item: T) => string;
+  updateItem: (element: HTMLElement, datum: T) => HTMLElement;
+  afterInit: () => void;
 };
 
 type State = {
   prevCursor: number;
-  nextCursor?: number;
+  nextCursor: number | null;
+  end: number;
+  start: number;
 };
 
 const ScrollDirection = {
@@ -36,25 +41,48 @@ export class VirtualListComponent<T> extends Component<Props<T>, State> {
   BOTTOM_OBSERVER_ELEMENT: HTMLElement;
   ELEMENTS_LIMIT = this.props.pageSize * 2;
   ELEMENTS_POOL: ListItemElement[] = [];
-  state = {
+  state: State = {
     prevCursor: 0,
     nextCursor: 0,
+    start: 0,
+    end: 0,
   };
 
-  init(): void {
+  async init(): Promise<void> {
     const classes = "relative"
+    let initialized = false;
     this.element.classList.add(...classes.split(" "));
 
     this.element.style.paddingTop = "0px";
     this.element.style.paddingBottom = "0px";
+    const { startPage, pageSize } = this.props;
 
+    if (startPage && startPage > 0) {
+      const start = startPage >= pageSize ? startPage - pageSize : startPage;
+      const limit = pageSize * 2;
 
+      const {
+        chunk,
+        prev_cursor: prevCursor,
+        next_cursor: nextCursor,
+      } = await this.props.initLoad(start, limit);
+
+      this.#initElementsPool(start, chunk, limit);
+
+      const newPageSize = nextCursor === null ? pageSize : limit
+
+      this.state.start = start;
+      this.state.end = start + newPageSize;
+      this.state.prevCursor = prevCursor;
+      this.state.nextCursor = nextCursor;
+    }
 
     [this.TOP_OBSERVER_ELEMENT] = intersectionObserver({
       root: this.root,
-      callback: async ([entry]) => {
-        if (entry.intersectionRatio > 0.1) {
-          await this.update(ScrollDirection.UP);
+      callback: ([entry]) => {
+
+        if (initialized && entry.intersectionRatio > 0.1) {
+          this.update(ScrollDirection.UP);
         }
       },
       elementConfig: { className: `bg-red-500 ${ABSOLUTE_CENTER}` }
@@ -62,58 +90,103 @@ export class VirtualListComponent<T> extends Component<Props<T>, State> {
 
     [this.BOTTOM_OBSERVER_ELEMENT] = intersectionObserver({
       root: this.root,
-      callback: async ([entry]) => {
-        if (entry.intersectionRatio > 0.1) {
-          await this.update(ScrollDirection.DOWN);
+      callback: ([entry]) => {
+        if (initialized && entry.intersectionRatio > 0.1) {
+          this.update(ScrollDirection.DOWN);
         }
       },
       elementConfig: { className: `bg-blue-500 ${ABSOLUTE_CENTER}` }
     });
+
+    if (startPage && startPage > 0) {
+      this.props.afterInit();
+
+      const firstElementTranslateY = this.ELEMENTS_POOL[0].dataset.translateY;
+      const diff = +firstElementTranslateY - this.#paddingTop();
+
+      this.element.style.paddingBottom = `${Math.max(0, this.#paddingBottom() - diff)}px`;
+      this.element.style.paddingTop = `${firstElementTranslateY}px`;
+
+      this.TOP_OBSERVER_ELEMENT.style.transform = `translateY(${firstElementTranslateY}px)`;
+      this.BOTTOM_OBSERVER_ELEMENT.style.transform = `translateY(${getLast(this.ELEMENTS_POOL).dataset.translateY}px)`;
+
+    }
+
+    initialized = true;
   }
 
   getComponentId(): string {
     return "virtual-list";
   }
 
-  async update(trigger: ScrollDirectionType) {
+  update(trigger: ScrollDirectionType) {
     switch (trigger) {
       case ScrollDirection.UP:
-        await this.#handleTopIntersection();
+        this.#handleTopIntersection();
         break;
       case ScrollDirection.DOWN:
-        await this.#handleBottomIntersection();
+        this.#handleBottomIntersection();
         break;
     }
   }
 
+  async #handleTopIntersection() {
+    if (this.state.start <= 0) {
+      return;
+    }
+
+    const { pageSize } = this.props;
+
+    const {
+      chunk,
+      prev_cursor: prevCursor,
+      next_cursor: nextCursor,
+    } = await this.props.load(this.state.start - pageSize, pageSize);
+    this.state.prevCursor = prevCursor;
+    this.state.nextCursor = nextCursor;
+    // Update start and end position
+    this.state.start -= pageSize;
+    this.state.end -= pageSize;
+
+    // Trigger recycling
+    this.#handleRecycleUp(chunk);
+    // Get the current first element Y Position
+    const firstElementTranslateY = this.ELEMENTS_POOL[0].dataset.translateY;
+    // The diff between old and new first element position is the value
+    // that we need to subtract from the bottom spacer
+    const diff = +firstElementTranslateY - this.#paddingTop();
+
+    this.element.style.paddingBottom = `${Math.max(0, this.#paddingBottom() - diff)}px`;
+    this.element.style.paddingTop = `${firstElementTranslateY}px`;
+
+    // Move observers to 1st and last rendered item respectively
+    this.TOP_OBSERVER_ELEMENT.style.transform = `translateY(${firstElementTranslateY}px)`;
+    this.BOTTOM_OBSERVER_ELEMENT.style.transform = `translateY(${getLast(this.ELEMENTS_POOL).dataset.translateY}px)`;
+  };
+
   #handleRecycleUp(chunk: T[]) {
-    const { updateFn, itemMargin, pageSize } = this.props;
-    const chunkLength = chunk.length;
+    const { updateItem, itemMargin, pageSize } = this.props;
+    const start = this.state.start;
+
     // Get the first element from the pool to determine the right position
     let firstCurrentElement = this.ELEMENTS_POOL[0];
     // Select last props.pageSize items from buffer zone
     for (let i = this.ELEMENTS_LIMIT - 1; i >= pageSize; i--) {
-      const page = this.ELEMENTS_LIMIT - i - 1;
-      console.log("page", page)
-
       const element = this.ELEMENTS_POOL[i];
-      // Update ordering attribute
-      element.dataset.listOrder = `${this.state.start + (i - pageSize)}`;
 
-      if (page > chunkLength - 1) {
+      element.style.display = "grid";
+      element.dataset.listOrder = `${start + (i - pageSize)}`;
 
-      } else {
-        // Update the item content
-        updateFn(element, chunk[i - pageSize]);
-        // Update the item position
-        const nextFirstPositionY = +firstCurrentElement.dataset.translateY - itemMargin - element.getBoundingClientRect().height;
+      updateItem(element, chunk[i - pageSize]);
+      // Update the item position
+      const nextFirstPositionY = +firstCurrentElement.dataset.translateY - itemMargin - element.getBoundingClientRect().height;
 
-        element.style.transform = `translateY(${nextFirstPositionY}px)`;
-        // Store it for easy access in the next iteration
-        element.dataset.translateY = `${nextFirstPositionY}`;
-        // Update last element reference and position
-        firstCurrentElement = element;
-      }
+      element.style.transform = `translateY(${nextFirstPositionY}px)`;
+      // Store it for easy access in the next iteration
+      element.dataset.translateY = `${nextFirstPositionY}`;
+      // Update last element reference and position
+      firstCurrentElement = element;
+
     }
 
     // Sort pool according to elements order
@@ -122,93 +195,68 @@ export class VirtualListComponent<T> extends Component<Props<T>, State> {
     });
   }
 
-  #handleTopIntersection = async () => {
-    // Move top and bottom observers
-    if (this.state.prevCursor <= 0) { return; }
-
+  async #handleBottomIntersection() {
     const { pageSize } = this.props;
-    const {
-      chunk,
-      prev_cursor: prevCursor,
-      next_cursor: nextCursor,
-      size
-    } = await this.props.load(this.state.prevCursor, pageSize);
-    this.state.prevCursor = prevCursor;
-    this.state.nextCursor = nextCursor;
-    // Trigger recycling
-    this.#handleRecycleUp(chunk);
-    // Get the current first element Y Position
-    const firstElementTranslateY = this.ELEMENTS_POOL[0].dataset.translateY;
-    console.log("firstElement", this.ELEMENTS_POOL[0])
-    // The diff between old and new first element position is the value
-    // that we need to subtract from the bottom spacer
-    const diff =
-      +firstElementTranslateY -
-      +this.element.style.paddingTop.replace("px", "");
-    this.element.style.paddingBottom = `${Math.max(
-      0,
-      +this.element.style.paddingBottom.replace("px", "") - diff
-    )}px`;
-    this.element.style.paddingTop = `${firstElementTranslateY}px`;
-    // Move observers to 1st and last rendered item respectively
-    this.TOP_OBSERVER_ELEMENT.style.transform = `translateY(${firstElementTranslateY}px)`;
-    this.BOTTOM_OBSERVER_ELEMENT.style.transform = `translateY(${getLast(this.ELEMENTS_POOL).dataset.translateY}px)`;
-
-  };
-
-  #handleBottomIntersection = async () => {
     if (this.state.nextCursor === null) {
       return;
     }
 
+    const count = this.state.end - this.state.start;
+
     const {
       chunk,
-      next_cursor: nextCursor,
       prev_cursor: prevCursor,
-      size,
-    } = await this.props.load(this.state.nextCursor, this.props.pageSize);
+      next_cursor: nextCursor,
+    } = await this.props.load(this.state.end, pageSize);
 
     this.state.prevCursor = prevCursor;
     this.state.nextCursor = nextCursor;
 
-    if (size < this.ELEMENTS_LIMIT) {
-      this.#initElementsPool(chunk);
-    } else if (count === this.ELEMENTS_LIMIT) {
-      this.state.start += nextSize;
-      this.state.end += nextSize;
-      this.#handleRecycleDown(data);
+
+    if (count < this.ELEMENTS_LIMIT) {
+      this.state.end += pageSize;
+      this.#initElementsPool(this.state.start, chunk);
+    } else {
+      this.state.start += pageSize;
+      this.state.end += pageSize;
+      this.#handleRecycleDown(chunk);
+
+      const paddingTop = this.#paddingTop();
+      const paddingBottom = this.#paddingBottom();
 
       const firstY = +this.ELEMENTS_POOL[0].dataset.translateY;
-      const { paddingTop, paddingBottom } = this.element.style;
-      const diff = firstY - +paddingTop.replace("px", "");
+      const diff = firstY - paddingTop;
+
       this.element.style.paddingTop = `${firstY}px`;
-      this.element.style.paddingBottom = `${Math.max(0, +paddingBottom.replace("px", "") - diff)}px`;
+      this.element.style.paddingBottom = `${Math.max(0, paddingBottom - diff)}px`;
+
       this.TOP_OBSERVER_ELEMENT.style.transform = `translateY(${firstY}px)`;
     }
 
     const lastItem = getLast(this.ELEMENTS_POOL);
     this.BOTTOM_OBSERVER_ELEMENT.style.transform = `translateY(${lastItem.dataset.translateY}px)`;
+
+
   };
 
 
   #handleRecycleDown(chunk: T[]) {
-    const { updateFn, itemMargin, pageSize } = this.props;
+    const { updateItem, itemMargin, pageSize } = this.props;
     const chunkLength = chunk.length;
     let lastEl = getLast(this.ELEMENTS_POOL);
     let lastElY = +lastEl.dataset.translateY + lastEl.getBoundingClientRect().height + itemMargin;
 
     for (let i = 0; i < pageSize; i++) {
       const element = this.ELEMENTS_POOL[i];
-      element.dataset.listOrder = `${this.state.start + pageSize + i}`;
+      element.dataset.listOrder = `${this.state.prevCursor + i}`;
 
       if (i >= chunkLength) {
-        element.style.display = "none";
         element.dataset.translateY = `${lastElY}`;
         lastEl = element;
-        lastElY = +lastEl.dataset.translateY + lastEl.getBoundingClientRect().height + itemMargin;
+        element.style.display = "none";
       } else {
         element.style.display = "grid";
-        updateFn(element, chunk[i]);
+        updateItem(element, chunk[i]);
         element.style.transform = `translateY(${lastElY}px)`;
         element.dataset.translateY = `${lastElY}`;
         lastEl = element;
@@ -220,42 +268,58 @@ export class VirtualListComponent<T> extends Component<Props<T>, State> {
   }
 
 
-  #initElementsPool(chunk: T[]): void {
-    const elements = chunk.map((d, i) => {
+  #initElementsPool(start: number, chunk: T[], limit?: number): void {
+    const totalElements = limit ?? chunk.length;
+
+    const elements = Array(totalElements).fill(null).map((_, i) => {
       const element = document.createElement("div");
-      element.innerHTML = this.props.templateFn(d);
+      element.innerHTML = this.props.renderItem(chunk[i]);
+
       const itemElement = element.firstElementChild as ListItemElement;
-      // Add absolute positioning to each list item
       itemElement.classList.add(...ABSOLUTE_CENTER.split(" "));
-      // Set up virtual list order attribute
-      itemElement.dataset.listOrder = `${this.ELEMENTS_POOL.length + i}`;
-      // Initialize translateY attribute
+      itemElement.dataset.listOrder = `${start + i}`;
       itemElement.dataset.translateY = `${0}`;
+
       return element.firstElementChild as ListItemElement;
     });
 
     this.ELEMENTS_POOL.push(...elements);
     this.element.append(...elements);
 
+    const paddingTop = this.#paddingTop();
+
     for (const element of elements) {
-      if (element.previousSibling !== null) {
-        // Getting the previous element if exists
-        const siblingElement = element.previousElementSibling as ListItemElement;
-        // Getting the previous element height
-        const siblingHeight = siblingElement.getBoundingClientRect().height;
-        // Getting the previous element translateY
-        const siblingTranslateY = +siblingElement.dataset.translateY;
-        // Calculating the position of current element
-        const translateY =
-          siblingHeight + siblingTranslateY + this.props.itemMargin;
-        // Moving element
+      if (element.previousSibling === null) {
+        const height = element.getBoundingClientRect().height;
+        const translateY = height * start + this.props.itemMargin * start + paddingTop;
         element.style.transform = `translateY(${translateY}px)`;
-        // Store the position in data attribute
+        element.dataset.translateY = `${translateY}`;
+      } else {
+        const siblingElement = element.previousElementSibling as ListItemElement;
+        const siblingHeight = siblingElement.getBoundingClientRect().height;
+
+        const siblingTranslateY = +siblingElement.dataset.translateY;
+        let translateY = siblingHeight + siblingTranslateY + this.props.itemMargin;
+        if (siblingHeight === 0) {
+          translateY = siblingTranslateY;
+        }
+
+        element.style.transform = `translateY(${translateY}px)`;
         element.dataset.translateY = `${translateY}`;
       }
     }
   }
+
+  #paddingTop = (): number => {
+    return +this.element.style.paddingTop.replace("px", "");
+  }
+
+  #paddingBottom = (): number => {
+    return +this.element.style.paddingBottom.replace("px", "");
+  }
 }
+
+
 
 
 const getLast = <T>(array: T[]): T => {

@@ -18,13 +18,13 @@ export abstract class Component<P extends {}, S extends object = {}> {
    * Provide any init logic that's called in
    * constructor phase
    */
-  init(): void {}
+  abstract init(): void;
 
   /**
    * Kind of React.setState() to update the component when data is changed
    * @param args
    */
-  protected update(...args: any): void {}
+  protected update(...args: any): void { }
   /**
    * Render component into DOM
    */
@@ -52,5 +52,5 @@ export abstract class Component<P extends {}, S extends object = {}> {
   /**
    * Schedule any side-effects
    */
-  effect(): void {}
+  effect(): void { }
 }

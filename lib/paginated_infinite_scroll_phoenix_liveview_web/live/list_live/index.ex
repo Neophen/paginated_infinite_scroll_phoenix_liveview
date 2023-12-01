@@ -1,7 +1,7 @@
 defmodule PaginatedInfiniteScrollPhoenixLiveviewWeb.ListLive.Index do
   use PaginatedInfiniteScrollPhoenixLiveviewWeb, :live_view
 
-  @total 36
+  @total 101
   @products Enum.map(0..@total, fn i ->
               %{
                 price: "#{i}",

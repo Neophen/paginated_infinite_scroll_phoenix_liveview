@@ -1,0 +1,212 @@
+defmodule PaginatedInfiniteScrollPhoenixLiveviewWeb.ListLive.Index do
+  use PaginatedInfiniteScrollPhoenixLiveviewWeb, :live_view
+
+  @total 64
+  @per_page 5 * 4
+  @pool_total @per_page * 2
+  @products Enum.map(0..@total, fn i ->
+              %{
+                id: "product-#{i}",
+                price: "#{i}",
+                link: "/#{i}",
+                full_price: "#{i + 20}",
+                sold: rem(i, 2) == 0,
+                src:
+                  "https://ucarecdn.com/59bb7a75-8065-4b6b-af93-80ce21648cfc/-/format/auto/-/quality/smart/-/scale_crop/380x380/smart_objects_faces_points/center/"
+              }
+            end)
+
+  @spec render(any()) :: Phoenix.LiveView.Rendered.t()
+  def render(assigns) do
+    ~H"""
+    <div class="bg-white p-4">
+      <div class="relative">
+        <%!-- <div id="infinite-scroll" phx-hook="InfiniteScroll" /> --%>
+        <div id="infinite-scroll" class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          <%= if @cursor_start > 0 do %>
+            <.placeholder
+              :for={id <- 0..(@cursor_start - 1)}
+              id={"placeholder-start-#{id}"}
+              previous={@cursor_start - 1 == id}
+            />
+          <% end %>
+
+          <.product_card :for={{id, product} <- @streams.products} product={product} id={id} />
+
+          <%= if @cursor_end != nil do %>
+            <.placeholder
+              :for={id <- @cursor_end..@total}
+              id={"placeholder-end-#{id}"}
+              next={@cursor_end == id}
+            />
+          <% end %>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  def mount(_params, _session, socket) do
+    socket =
+      socket
+      |> assign(:total, @total)
+      |> assign(:pool_total, @pool_total)
+
+    {:ok, socket}
+  end
+
+  def handle_params(unsigned_params, _uri, socket) do
+    page = String.to_integer(Map.get(unsigned_params, "page", "0"))
+    IO.inspect(page, label: "=============page=============")
+
+    socket =
+      socket
+      |> assign(:page, page)
+      |> assign_new(:pool_start, fn -> page end)
+      |> assign_new(:pool_end, fn -> page end)
+      |> assign_products(page, @per_page)
+
+    {:noreply, socket}
+  end
+
+  def handle_event(
+        "intersect",
+        %{"value" => "next"},
+        %{assigns: %{cursor_end: cursor_end}} = socket
+      ) do
+    if(cursor_end == nil) do
+      {:noreply, socket}
+    else
+      {:noreply, push_patch(socket, to: "/?page=#{cursor_end}")}
+    end
+  end
+
+  def handle_event(
+        "intersect",
+        %{"value" => "prev"},
+        %{assigns: %{cursor_start: cursor_start}} = socket
+      ) do
+    IO.inspect(cursor_start, label: "=============cursor_start=============")
+
+    {:noreply, socket}
+    # if(cursor_start == 0) do
+    #   {:noreply, socket}
+    # else
+    #   {:noreply, push_patch(socket, to: "/?page=#{cursor_start - @per_page}")}
+    # end
+  end
+
+  def assign_products(socket, cursor_start, limit) do
+    %{pool_start: pool_start, pool_end: pool_end} = socket.assigns
+    data = load(cursor_start, limit)
+
+    %{
+      products: products,
+      cursor_start: cursor_start,
+      cursor_end: cursor_end
+    } = data
+
+    IO.inspect(cursor_end, label: "=============cursor_end=============")
+
+    socket
+    |> stream(:products, products, limit: @pool_total)
+    |> assign(:cursor_start, cursor_start)
+    |> assign(:cursor_end, cursor_end)
+  end
+
+  defp load(cursor_start, limit) when cursor_start >= @total do
+    %{
+      products: [],
+      cursor_start: -limit,
+      cursor_end: nil,
+      size: 0
+    }
+  end
+
+  defp load(cursor_start, limit) do
+    products = Enum.slice(@products, cursor_start, limit)
+
+    cursor_end = if(length(products) == limit, do: cursor_start + limit, else: nil)
+
+    %{
+      products: products,
+      cursor_start: cursor_start,
+      cursor_end: cursor_end
+    }
+  end
+
+  attr(:id, :string, required: true)
+  attr(:product, :map, required: true)
+
+  @spec product_card(assigns :: map()) :: Rendered.t()
+  def product_card(assigns) do
+    ~H"""
+    <div id={@id}>
+      <div class="relative divide-y border sm:grid-cols-3 lg:grid-cols-4">
+        <.link navigate={@product.link} class="group/product">
+          <div class="overflow-hidden">
+            <img
+              src="https://ucarecdn.com/59bb7a75-8065-4b6b-af93-80ce21648cfc/-/format/auto/-/quality/smart/-/scale_crop/380x380/smart_objects_faces_points/center/"
+              alt=""
+              class="x-image aspect-square w-full object-cover transition-transform group-hover/product:scale-[1.2]"
+            />
+          </div>
+          <div class=" bg-black text-white pointer-events-none absolute top-4 right-0 px-4 py-1 text-center sm:text-sm ">
+            <%= dgettext("product_card", "Sold!") %>
+          </div>
+        </.link>
+        <div class="bg-white w-full px-4 py-2 text-left">
+          <p class="text-xl font-bold text-slate-900">
+            <%= @product.price %>
+          </p>
+          <button
+            type="button"
+            class="text-caption-2 text-slate-500 inline-flex items-center gap-px hover:underline"
+          >
+            <%= "#{@product.full_price} Incl." %> ☑︎
+          </button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  attr(:id, :string, required: true)
+  attr(:next, :boolean, default: false)
+  attr(:previous, :boolean, default: false)
+  attr(:hook, :string, default: nil)
+  attr(:value, :string, default: nil)
+
+  @spec placeholder(assigns :: map()) :: Rendered.t()
+  def placeholder(%{next: true} = assigns) do
+    assigns
+    |> assign(next: false)
+    |> assign(:hook, "Intersect")
+    |> assign(:value, "next")
+    |> placeholder()
+  end
+
+  def placeholder(%{previous: true} = assigns) do
+    assigns
+    |> assign(previous: false)
+    |> assign(:hook, "Intersect")
+    |> assign(:value, "prev")
+    |> placeholder()
+  end
+
+  def placeholder(assigns) do
+    ~H"""
+    <div id={@id} phx-hook={@hook} data-value={@value} class="divide-y border">
+      <div class="animate-pulse bg-slate-100 aspect-square w-full"></div>
+      <div class="bg-white px-4 py-2 text-left">
+        <div class="animate-pulse bg-slate-100 text-xl font-bold w-[9ch]">
+          &nbsp;
+        </div>
+        <div class="animate-pulse bg-slate-100 text-caption-2 w-[16ch] inline-flex items-center gap-px">
+          &nbsp;
+        </div>
+      </div>
+    </div>
+    """
+  end
+end
