@@ -1,7 +1,8 @@
 defmodule PaginatedInfiniteScrollPhoenixLiveviewWeb.ListLive.Show do
   use PaginatedInfiniteScrollPhoenixLiveviewWeb, :live_view
 
-  @products Enum.map(1..1000, fn i ->
+  @total 10_001
+  @products Enum.map(0..@total, fn i ->
               %{
                 id: "product-#{i}",
                 index: i,

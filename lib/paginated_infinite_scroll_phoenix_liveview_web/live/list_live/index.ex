@@ -1,7 +1,7 @@
 defmodule PaginatedInfiniteScrollPhoenixLiveviewWeb.ListLive.Index do
   use PaginatedInfiniteScrollPhoenixLiveviewWeb, :live_view
 
-  @total 101
+  @total 10_001
   @products Enum.map(0..@total, fn i ->
               %{
                 price: "#{i}",
@@ -13,7 +13,7 @@ defmodule PaginatedInfiniteScrollPhoenixLiveviewWeb.ListLive.Index do
               }
             end)
 
-  @spec render(any()) :: Phoenix.LiveView.Rendered.t()
+  @spec render(assigns :: map()) :: Rendered.t()
   def render(assigns) do
     ~H"""
     <div class="bg-white p-4">
