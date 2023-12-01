@@ -2,10 +2,14 @@ import { ViewHook } from 'phoenix_live_view'
 import { VirtualListComponent, getProductRowRenderer, updateProductRow } from '../components';
 import type { FeedItem, Response } from '../types';
 
+const updateScrollPosition = () => {
+  console.warn("pagehide", window.scrollY)
+  if(window.scrollY !== 0){ setScrollPosition(window.scrollY);}
+}
+
 const InfiniteScroll: Partial<ViewHook> & {
   app: HTMLDivElement;
   pageSize: number;
-
 } = {
   pageSize: 5,
   mounted() {
@@ -13,8 +17,7 @@ const InfiniteScroll: Partial<ViewHook> & {
 
     this.app = this.el;
 
-    window.onbeforeunload = () => { setScrollPosition(window.scrollY); }
-
+    window.addEventListener('pagehide', updateScrollPosition);
 
     this.init()
   },
@@ -23,11 +26,35 @@ const InfiniteScroll: Partial<ViewHook> & {
   },
   destroyed() {
     console.warn("destroyed")
+    window.removeEventListener('pagehide', updateScrollPosition);
   },
   async init() {
     const pageParam = getSearchParam('page');
     const startPage = Number(pageParam || 0)
     const cols = getColumnCount();
+
+    const getLoader = (first?: boolean) => async (start: number, limit: number) => {
+      const {
+        chunk,
+        prev_cursor,
+        next_cursor,
+        size,
+      } = await this.load(start * cols, limit * cols);
+      let pageChunk = [[]];
+      if (size > 0) {
+        pageChunk = chunkArray(chunk, cols)
+      }
+
+      const currentPage = prev_cursor / cols;
+      if(!first) {updateSearchParam('page', currentPage)}
+
+      return {
+        prev_cursor: currentPage,
+        next_cursor: next_cursor !== null ? next_cursor / cols : null,
+        size: pageChunk.length,
+        chunk: pageChunk,
+      };
+    }
 
     this.feed = new VirtualListComponent(this.app, {
       renderItem: getProductRowRenderer(cols),
@@ -35,52 +62,11 @@ const InfiniteScroll: Partial<ViewHook> & {
       startPage: startPage,
       pageSize: this.pageSize,
       itemMargin: 16,
-      load: async (start, limit) => {
-        const {
-          chunk,
-          prev_cursor,
-          next_cursor,
-          size,
-        } = await this.load(start * cols, limit * cols);
-        let pageChunk = [[]];
-        if (size > 0) {
-          pageChunk = chunkArray(chunk, cols)
-        }
-
-
-
-        const currentPage = prev_cursor / cols;
-        updateSearchParam('page', currentPage)
-        return {
-          prev_cursor: currentPage,
-          next_cursor: next_cursor !== null ? next_cursor / cols : null,
-          size: pageChunk.length,
-          chunk: pageChunk,
-        };
-      },
-      initLoad: async (start, limit) => {
-        const cols = getColumnCount();
-        const {
-          chunk,
-          prev_cursor,
-          next_cursor,
-          size,
-        } = await this.load(start * cols, limit * cols);
-        let pageChunk = [[]];
-        if (size > 0) {
-          pageChunk = chunkArray(chunk, cols)
-        }
-
-        return {
-          prev_cursor: prev_cursor / cols,
-          next_cursor: next_cursor !== null ? next_cursor / cols : null,
-          size: pageChunk.length,
-          chunk: pageChunk,
-        };
-      },
+      load: getLoader(),
+      initLoad: getLoader(true),
       afterInit: () => {
         const scrollTop = getScrollPosition();
-        if (scrollTop) window.scrollTo(0, scrollTop);
+        if (scrollTop) {window.scrollTo(0, scrollTop)}
       }
     });
 

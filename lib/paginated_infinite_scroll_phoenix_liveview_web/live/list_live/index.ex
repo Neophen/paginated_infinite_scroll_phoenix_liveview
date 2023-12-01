@@ -35,8 +35,6 @@ defmodule PaginatedInfiniteScrollPhoenixLiveviewWeb.ListLive.Index do
   end
 
   def handle_event("load", params, socket) do
-    IO.inspect(params, label: "=============params=============")
-
     %{
       "start" => start,
       "limit" => limit
